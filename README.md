@@ -1,7 +1,7 @@
 # AMAC001_fibre_trial
-Analysis repository of the experiment 7.3 on mannan fibre consumption in swine.
+Analysis repository of the experiment 7.3 on mannan fibre consumption in swine. The downstream analyses are split in multiple steps.
 
-## 1. Load data
+## 1. Prepare data
 
 The first step fetches all relevant data and generates a data.Rdata file in the data directory. 
 
