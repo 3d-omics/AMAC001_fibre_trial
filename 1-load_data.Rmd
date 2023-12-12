@@ -1,5 +1,5 @@
 ---
-title: "1-prepare_data.Rmd"
+title: "1-load_data.Rmd"
 author: "Antton Alberdi"
 date: "2023-12-12"
 output: html_document
@@ -22,7 +22,7 @@ library(ape)
 This is the document containing the number of sequencing reads from each sample have been mapped to each MAG. Note that this is the raw data that needs to be further processed before running any statistics on them.
 
 ```{r load_count}
-counts <- read_tsv("https://sid.erda.dk/share_redirect/gR0yYR6oKL/results/stats/coverm_genome_2023-11-03_swine_mannan_mg.count.tsv") %>%
+readcounts <- read_tsv("https://sid.erda.dk/share_redirect/gR0yYR6oKL/results/stats/coverm_genome_2023-11-03_swine_mannan_mg.count.tsv") %>%
   rename_all(~ str_remove_all(., " Read Count")) #simplify column names
 ```
 
@@ -31,7 +31,8 @@ This is the document containing the number of nucleotide bases have been covered
 
 ```{r load_hits}
 basehits <- read_tsv("https://sid.erda.dk/share_redirect/gR0yYR6oKL/results/stats/coverm_genome_2023-11-03_swine_mannan_mg.covered_bases.tsv") %>%
-  rename_all(~ str_remove_all(., " Covered Bases")) #simplify column names
+  rename_all(~ str_remove_all(., " Covered Bases")) %>% #simplify column names
+  arrange(match(Genome, readcounts$Genome)) #arrange to match readcounts table
 ```
 
 ### MAG lengths
@@ -39,7 +40,8 @@ This information is needed to calculate coverage values and to normalise read co
 ```{r load_maglengths}
 maglengths <- read_tsv("https://sid.erda.dk/share_redirect/gR0yYR6oKL/results/stats/coverm_genome_2023-11-03_swine_mannan_mg.length.tsv") %>%
   rename(MAGlength=2) %>% #remove redundancy and rename
-  select(Genome,MAGlength)
+  select(Genome,MAGlength) %>% #simplify column names
+  arrange(match(Genome, readcounts$Genome))  #arrange to match readcounts table
 ```
 
 ### MAG tree
@@ -59,7 +61,8 @@ taxonomy <- read_tsv("https://sid.erda.dk/share_redirect/BLJUHsGfWu/results/dere
   rename(Genome = user_genome) %>%
   mutate(Genome = str_replace_all(Genome,"\\.fa", "")) %>%
   separate(classification, c("Domain", "Phylum","Class","Order","Family","Genus","Species"),  sep =";") %>%
-  select(Genome,Domain,Phylum,Class,Order,Family,Genus,Species)
+  select(Genome,Domain,Phylum,Class,Order,Family,Genus,Species) %>%
+  arrange(match(Genome, readcounts$Genome))  #arrange to match readcounts table
 ```
 
 ### MAG functional annotations
@@ -76,6 +79,28 @@ annotations <- read_tsv("https://sid.erda.dk/share_redirect/BLJUHsGfWu/results/d
 By dividing the number of base hits by the length of each MAG, coverage values can be calculated.
 
 ```{r calc_coverage}
-coverage <- basehits %>%
+genomecoverage <- basehits %>%
   mutate(across(where(is.numeric), ~ ./maglengths$MAGlength))
 ```
+
+### Coverage filtering
+
+```{r filter_coverage}
+min_coverage=0.3
+readcountsfilt <- genomecoverage %>%
+  mutate(across(where(is.numeric), ~ ifelse(. > min_coverage, 1, 0))) %>%
+  mutate(across(-1, ~ . * readcounts[[cur_column()]])) 
+```
+
+### Generate genome count table
+
+```{r calc_genometable}
+readlength=150 #change if sequencing read length is different
+genomecount <- readcountsfilt %>%
+  mutate(across(where(is.numeric), ~ . / (maglengths$MAGlength / readlength) ))
+```
+
+## Working objects
+
+By dividing t
+
