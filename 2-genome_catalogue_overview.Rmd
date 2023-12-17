@@ -21,7 +21,6 @@ suppressPackageStartupMessages(library(ggtreeExtra))
 suppressPackageStartupMessages(library(gridExtra))
 suppressPackageStartupMessages(library(phytools))
 suppressPackageStartupMessages(library(Rtsne))
-
 ```
 
 ## Load data
@@ -34,7 +33,7 @@ load("data/data.Rdata")
 
 ## Genome phylogeny
 
-```{r genome_phylogeny, message=FALSE}
+```{r genome_phylogeny, message=FALSE, warning=FALSE, fig.height=10, fig.width=10, fig.fullwidth=TRUE}
 
 #Get phylum colors from the EHI standard
 phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
@@ -98,7 +97,7 @@ circular_tree
 
 ## Genome quality
 
-```{r genome_quality, message=FALSE}
+```{r genome_quality, message=FALSE, warning=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
 
 #Generate quality biplot
 genome_biplot <- genome_metadata %>%
@@ -124,7 +123,7 @@ genome_contamination <- genome_metadata %>%
                         axis.text.y=element_blank(),
                         axis.ticks.y=element_blank(),
                         axis.text.x=element_blank(),
-                         axis.ticks.x=element_blank(),
+                        axis.ticks.x=element_blank(),
                         plot.margin = unit(c(0, 0, 0.40, 0),"inches")) #add bottom-margin (top, right, bottom, left)
 
 #Generate completeness boxplot
@@ -161,7 +160,7 @@ grid.arrange(grobs = list(genome_completeness,genome_biplot,genome_contamination
 
 ## Functional overview
 
-```{r function_heatmap, message=FALSE}
+```{r function_heatmap, message=FALSE, warning=FALSE, fig.height=10, fig.width=10, fig.fullwidth=TRUE}
 
 # Aggregate basal GIFT into elements
 function_table <- genome_gifts %>%
@@ -202,12 +201,12 @@ function_tree <- function_tree +
             scale_color_gradient(low = "#cf8888", high = "#a2cc87") +
             labs(color="Genome completeness")
 
-
+function_tree
 ```
 
 ## Functional ordination
 
-```{r function_ordination, message=FALSE}
+```{r function_ordination, message=FALSE, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
 # Generate the tSNE ordination
 tSNE_function <- Rtsne(X=function_table, dims = 2, check_duplicates = FALSE)
 
@@ -224,4 +223,6 @@ function_ordination <- tSNE_function$Y %>%
                             theme_minimal() +
                 labs(color="Phylum", size="Genome size") +
                 guides(color = guide_legend(override.aes = list(size = 5))) # enlarge Phylum dots in legend
+
+function_ordination
 ```
