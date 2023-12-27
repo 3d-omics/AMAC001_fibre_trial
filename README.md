@@ -21,3 +21,10 @@ Overview of the composition and diversity of microbial communities.
 
 - **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.Rmd
 - **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.html)
+
+## 4. Differential abundance between treatments
+
+- **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.Rmd
+- **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.html)
+
+

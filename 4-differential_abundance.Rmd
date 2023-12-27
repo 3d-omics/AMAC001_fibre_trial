@@ -1,0 +1,261 @@
+---
+title: "4-differential_abundance.Rmd"
+author: "Antton Alberdi"
+date: "2023-12-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r libraries, warning=FALSE, comments="", message=FALSE}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(ALDEx2))
+```
+
+## Load data
+
+```{r load_data}
+load("data/data.Rdata")
+```
+
+## Differential abundance (using ALDEx2)
+
+ALDEx2 is a different tool than others used for differential abundance testing. ALDEx2 estimates per-genome technical variation within each sample using Monte-Carlo instances drawn from the Dirichlet distribution. Sampling from this distribution returns a posterior probability distribution of the observed data under a repeated sampling model. This distribution is converted to a log-ratio that linearizes the differences between genomes. For detailed information see:  https://www.bioconductor.org/packages/devel/bioc/vignettes/ALDEx2/inst/doc/ALDEx2_vignette.html
+
+### Prepare data
+
+Subset genome count table to only include the required data and convert the genome counts to integers (ALDEx2 only accepts integers).
+
+```{r subset_digesta}
+sample_metadata_digesta <- sample_metadata %>%
+  filter(type == "digesta")
+
+genome_counts_digesta <- genome_counts[,c("genome",sample_metadata_digesta$sample)] %>%
+  column_to_rownames(var="genome") %>%
+  mutate_all(~ . * 1e6) %>% #multiple by a million
+  round(0) #round to integer
+```
+
+
+### CLR normalisation
+
+Generate random instances of the centred log-ratio transformed values.
+
+```{r digesta_clr}
+genome_counts_digesta.clr <- aldex.clr(genome_counts_digesta, 
+               sample_metadata_digesta$treatment, 
+               mc.samples=128, 
+               denom="all", 
+               verbose=F)
+
+```
+
+### Hypothesis testing
+
+Calculate expected values of the Welch's t-test and Wilcoxon rank test. 
+
+```{r digesta_cttest}
+genome_counts_digesta.ttest <- aldex.ttest(genome_counts_digesta.clr, 
+                hist.plot=F, 
+                paired.test=F, 
+                verbose=F)
+```
+
+The output contains:
+- **we.epa:** vector containing the expected P value of the Welch's t-test for each genome.
+- **we.eBH:** vector containing the expected value of the Benjamini Hochberg corrected P value for each genome.
+- **wi.epa:** vector containing the expected P value of the Wilcoxon test for each genome.
+- **wi.eBH:** vector containing the expected value of the Benjamini Hochberg corrected P value for each genome.
+
+### Effect size estimation
+
+Calculate effect sizes and differences between conditions. 
+
+```{r digesta_effect}
+genome_counts_digesta.effect <- aldex.effect(genome_counts_digesta.clr, 
+              CI=T, 
+              verbose=F, 
+              include.sample.summary=F, 
+              glm.conds=NULL, 
+              useMC=F)
+```
+
+The output contains:
+
+- **rab.all:** a vector containing the median clr value for each genome.
+- **rab.win.conditionA:** a vector containing the median clr value for each genome in condition A.
+- **rab.win.conditionB:** a vector containing the median clr value for each genome in condition B.
+- **diff.btw:** a vector containing the per-genome median difference between condition A and B.
+- **diff.win:** a vector containing the per-genome maximum median difference between Dirichlet instances within conditions.
+- **effect:** a vector containing the per-genome effect size.
+- **overlap:** a vector containing the per-genome proportion of effect size that is 0 or less.
+
+### Merge output
+
+Merge test results and effect size estimations with metadata.
+```{r digesta_da}
+genome_counts_digesta.all <- data.frame(genome_counts_digesta.ttest,genome_counts_digesta.effect) %>%
+    rownames_to_column(var="genome") %>%
+    left_join(genome_metadata,by=join_by(genome==genome))
+```
+
+## Plot differential abundances
+
+Each dot represents a different genome (MAG). For details about the three plot types shown below visit:  https://www.tandfonline.com/doi/full/10.1080/10618600.2015.1131161
+
+### Bland-Altman plot
+
+**X axis:** average relative abundance of genomes in the entire dataset (both treatments together).
+**Y axis:** relative abundance difference of genomes between treatments.
+
+It is useful to determine if the data components are symmetrical in their between-group differences. However, a BA plot fails to describe how large the depicted differences are in relation to any underlying variability (within treatment).
+
+```{r digesta_da_ba, message=F, warning=F, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+genome_counts_digesta.all %>%
+    mutate(significance = ifelse(wi.eBH < 0.05, "1", "0")) %>%
+    ggplot(., aes(x=rab.all, y=diff.btw, color=significance)) +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc","#00FFFF")) +
+      labs(color="Significance", y="Difference between treatments", x="Mean CLR") +
+      theme_classic()
+```
+
+### Volcano plot
+
+**X axis:** -log()-transformed p-value of the Benjamini Hochberg corrected P value.
+**Y axis:** relative abundance difference of genomes between treatments.
+
+Since the p-value is implicitly dependent on underlying within-treatment variability and on the sample size, the Volcano plot appears to display the biological significance of a given between-group difference for each component. However, p-values are not effect-sizes, nor even good proxies for effect-sizes ([Hasley et al. 2015](https://www.nature.com/articles/nmeth.3288)).
+
+```{r digesta_da_volcano, message=F, warning=F, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+genome_counts_digesta.all %>%
+    mutate(significance = ifelse(wi.eBH < 0.05, "1", "0")) %>%
+    ggplot(., aes(x=-log(wi.eBH), y=diff.btw, color=significance)) +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc","#00FFFF")) +
+      labs(color="Significance", y="Difference between treatments", x="p-value") +
+      theme_classic()
+```
+
+### Effect-size plot (or Difference versus Dispersion plot)
+
+Depicts an estimate of the difference between treatments (δ) versus the estimated standard deviation within treatments (σ). The effect-size plot thus displays the actual information that is required to differentiate and meaningfully interpret statistical significance, with regard to hypothesis testing, and biological significance, with respect to what an experimentalist expects to observe.
+
+**X axis:** relative abundance variation of genomes within treatments.
+**Y axis:** relative abundance difference of genomes between treatments.
+
+The values above or under the thin dashed line have larger variation between treatments than within treatments (x1), the values above or under the medium dashed line exhibit variation that is more than twice as large between treatments than within treatments (x2), while the values above or under the large dashed line exhibit variation that is more than four times as large between treatments than within treatments (x4).
+
+ALDEx2 authors suggest that an effect size cutoff of 1 or greater be used as a "biological significance" cutoff.
+
+#### Significance based on p-value
+
+```{r digesta_da_effect_pvalue, message=F, warning=F, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+genome_counts_digesta.all %>%
+    mutate(significance = ifelse(wi.eBH < 0.05, "1", "0")) %>%
+    ggplot(., aes(x=diff.win, y=diff.btw, color=significance)) +
+      geom_abline(intercept = 0, slope =  0, size=0.4, linetype="solid",  color="#000000") +
+      geom_abline(intercept = 0, slope =  1, size=0.4, linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -1, size=0.4, linetype="dashed", color="#000000") + 
+      geom_abline(intercept = 0, slope = -2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc90","#00FFFF90")) +
+      geom_text(aes(2.5, 20), label = "Enriched\nin TJ2", color="#666666") +
+      geom_text(aes(2.5, -20), label = "Enriched\nin TJ1", color="#666666") +
+      labs(color="Significance", y="Difference between treatments", x="Dispersion within treatments") +
+      theme_classic()
+```
+
+#### Significance based on posterior probabilities
+
+```{r digesta_da_effect_posterior, message=F, warning=F, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+genome_counts_digesta.all %>%
+    mutate(significance = ifelse(overlap < 0.1, "1", "0")) %>%
+    ggplot(., aes(x=diff.win, y=diff.btw, color=significance)) +
+      geom_abline(intercept = 0, slope =  0, size=0.4, linetype="solid",  color="#000000") +
+      geom_abline(intercept = 0, slope =  1, size=0.4, linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -1, size=0.4, linetype="dashed", color="#000000") + 
+      geom_abline(intercept = 0, slope = -2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc90","#00FFFF90")) +
+      geom_text(aes(2.5, 20), label = "Enriched\nin TJ2", color="#666666") +
+      geom_text(aes(2.5, -20), label = "Enriched\nin TJ1", color="#666666") +
+      labs(color="Significance", y="Difference between treatments", x="Dispersion within treatments") +
+      theme_classic()
+```
+
+#### Taxonomy
+
+```{r digesta_da_effect_taxonomy, message=F, warning=F, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+#Get phylum colors from the EHI standard
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    dplyr::select(phylum, colors) %>%
+    unique() %>%
+    arrange(phylum) %>%
+    dplyr::select(colors) %>%
+    pull()
+
+genome_counts_digesta.all %>%
+    mutate(significance = ifelse(wi.eBH < 0.05, "1", "0")) %>%
+    ggplot(., aes(x=diff.win, y=diff.btw, color=phylum, shape=significance)) +
+      geom_abline(intercept = 0, slope =  0, size=0.4, linetype="solid",  color="#000000") +
+      geom_abline(intercept = 0, slope =  1, size=0.4, linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope =  4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -1, size=0.4, linetype="dashed", color="#000000") + 
+      geom_abline(intercept = 0, slope = -2, size=0.6,   linetype="dashed", color="#000000") +
+      geom_abline(intercept = 0, slope = -4, size=0.8,   linetype="dashed", color="#000000") +
+      geom_point() +
+      scale_color_manual(values=phylum_colors) +
+      scale_shape_manual(values=c(1,19))+
+      geom_text(aes(2.5, 20), label = "Enriched\nin TJ2", color="#666666") +
+      geom_text(aes(2.5, -20), label = "Enriched\nin TJ1", color="#666666") +
+      labs(color="Phylum", shape="Significance", y="Difference between treatments", x="Dispersion within treatments") +
+      theme_classic()
+```
+
+## Largest effect-size genomes
+
+
+### Top enriched in TJ1
+
+```{r digesta_da_topeffect_TJ1}
+genome_counts_digesta.all %>%
+  filter(effect < -1) %>% #
+  filter(overlap < 0.1) %>% # >90% of the estimated effect sizes are >0
+  arrange(effect) %>%
+  dplyr::select(genome,effect,phylum,order,genus) %>%
+  kable()
+```
+
+### Top enriched in TJ2
+
+```{r digesta_da_topeffect_TJ2}
+genome_counts_digesta.all %>%
+  filter(effect > 1) %>%
+  filter(overlap < 0.1) %>% # >90% of the estimated effect sizes are >0
+  arrange(-effect) %>%
+  dplyr::select(genome,effect,phylum,order,genus) %>%
+  kable()
+```
+
+## Top genome details
+
+Plot details of genomes of interest
+
+```{r digesta_da_genomeoverview}
+aldex.plotFeature(genome_counts_digesta.clr,"D300254:bin_000010")
+```
