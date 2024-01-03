@@ -15,12 +15,77 @@ knitr::opts_chunk$set(echo = TRUE)
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(knitr))
 suppressPackageStartupMessages(library(ALDEx2))
+suppressPackageStartupMessages(library(phyloseq))
+suppressPackageStartupMessages(library(ANCOMBC))
+suppressPackageStartupMessages(library(ggplot2))
 ```
 
 ## Load data
 
 ```{r load_data}
 load("data/data.Rdata")
+```
+
+## Structural zeros
+
+First, we need to check whether there are any genomes that are only present in one of the treatments, as these should not be included in the differentia abundance analyses.
+
+```{r structural_zeros}
+TJ1_samples <- sample_metadata %>% 
+                    filter(type == "digesta") %>% #filter only faecal samples
+                    filter(treatment == "TJ1") %>% #filter only faecal samples
+                    dplyr::select(sample) %>% pull()
+
+TJ2_samples <- sample_metadata %>% 
+                    filter(type == "digesta") %>% #filter only faecal samples
+                    filter(treatment == "TJ2") %>% #filter only faecal samples
+                    dplyr::select(sample) %>% pull()
+
+structural_zeros <- genome_counts %>% 
+   rowwise() %>% #compute for each row (genome)
+   mutate(all_zeros_TJ1 = all(c_across(all_of(TJ1_samples)) == 0)) %>% # set true if all samples in TJ1 have zeros
+   mutate(all_zeros_TJ2 = all(c_across(all_of(TJ2_samples)) == 0)) %>% # set true if all samples in TJ2 have zeros
+   mutate(average_TJ1 = mean(c_across(all_of(TJ1_samples)), na.rm = TRUE)) %>% # get average genome counts across TJ1
+   mutate(average_TJ2 = mean(c_across(all_of(TJ2_samples)), na.rm = TRUE)) %>% # get average genome counts across TJ2
+   filter(all_zeros_TJ1 == TRUE || all_zeros_TJ2==TRUE)  %>% # filter only genomes with structural zeros
+   mutate(present = case_when(
+      all_zeros_TJ1 & !all_zeros_TJ2 ~ "TJ2",
+      !all_zeros_TJ1 & all_zeros_TJ2 ~ "TJ1",
+      !all_zeros_TJ1 & !all_zeros_TJ2 ~ "None",
+      TRUE ~ NA_character_
+    )) %>%
+   mutate(average = ifelse(present == "TJ1", average_TJ1, average_TJ2)) %>%
+   dplyr::select(genome, present, average) %>%
+   left_join(genome_metadata, by=join_by(genome==genome)) %>%
+   arrange(present,-average)
+```
+
+```{r structural_zeros_plot, message=FALSE, warning=FALSE, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+#Get phylum colors from the EHI standard
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(structural_zeros, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    dplyr::select(phylum, colors) %>%
+    mutate(colors = str_c(colors, "80"))  %>% #add 80% alpha
+    unique() %>%
+    arrange(phylum) %>%
+    dplyr::select(colors) %>%
+    pull()
+
+structural_zeros %>%
+    mutate(average = ifelse(present == "TJ1", average * -1, average)) %>% #convert TJ1 genome counts to negative
+    ggplot(., aes(x=average, y=forcats::fct_rev(phylum), color=phylum)) +
+      geom_jitter(size=3) +
+      geom_vline(xintercept=0) + 
+      xlim(-max(structural_zeros$average)-3,max(structural_zeros$average)+3) +
+      scale_color_manual(values=phylum_colors) +
+      geom_text(aes(-max(structural_zeros$average)+5, 1), label = "Only present\nin TJ1", color="#666666") +
+      geom_text(aes(max(structural_zeros$average)-5, 1), label = "Only present\nin TJ2", color="#666666") +
+     theme(legend.position='none',
+          panel.background = element_blank(),
+          axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"))+
+      labs(y="Genus",x="Genome counts") + 
+      guides(col=guide_legend("Phylum"))
 ```
 
 ## Differential abundance (using ALDEx2)
@@ -36,6 +101,7 @@ sample_metadata_digesta <- sample_metadata %>%
   filter(type == "digesta")
 
 genome_counts_digesta <- genome_counts[,c("genome",sample_metadata_digesta$sample)] %>%
+  filter(!genome %in% structural_zeros$genome) %>% # remove structural zeros
   column_to_rownames(var="genome") %>%
   mutate_all(~ . * 1e6) %>% #multiple by a million
   round(0) #round to integer
@@ -229,6 +295,34 @@ genome_counts_digesta.all %>%
 
 ## Largest effect-size genomes
 
+```{r aldex_enrichment_plot, message=FALSE, warning=FALSE, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+#Get phylum colors from the EHI standard
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_counts_digesta.all, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    dplyr::select(phylum, colors) %>%
+    mutate(colors = str_c(colors, "80"))  %>% #add 80% alpha
+    unique() %>%
+    arrange(phylum) %>%
+    dplyr::select(colors) %>%
+    pull()
+
+genome_counts_digesta.all %>%
+    filter(overlap < 0.1) %>%
+    ggplot(., aes(x=effect, y=forcats::fct_rev(phylum), color=phylum)) +
+      geom_jitter(size=3) +
+      geom_vline(xintercept=0) + 
+      xlim(-max(genome_counts_digesta.all$effect)-1,max(genome_counts_digesta.all$effect)+1) +
+      scale_color_manual(values=phylum_colors) +
+      geom_text(aes(-max(genome_counts_digesta.all$effect)+1, 1), label = "Enriched\nin TJ1", color="#666666") +
+      geom_text(aes(max(genome_counts_digesta.all$effect)-1, 1), label = "Enriched\nin TJ2", color="#666666") +
+     theme(legend.position='none',
+          panel.background = element_blank(),
+          axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+          axis.title.x=element_blank())+
+      labs(y="Genus",x="Genome counts") + 
+      guides(col=guide_legend("Phylum"))
+```
 
 ### Top enriched in TJ1
 
@@ -257,5 +351,152 @@ genome_counts_digesta.all %>%
 Plot details of genomes of interest
 
 ```{r digesta_da_genomeoverview}
-aldex.plotFeature(genome_counts_digesta.clr,"D300254:bin_000010")
+aldex.plotFeature(genome_counts_digesta.clr,"TJ2:bin_000189")
+```
+
+## Differential abundance (using ANCOM-BC2)
+
+ANCOM-BC2 requires input data to be stored as a phyloseq object
+ 
+```{r prepare_phyloseq, warning=FALSE, comments="", message=FALSE}
+phylo_samples <- sample_metadata %>% 
+                    filter(type == "digesta") %>% #filter only faecal samples
+                    column_to_rownames("sample") %>% 
+                    mutate(treatment = factor(treatment, levels = c("TJ1","TJ2"))) %>% 
+                    sample_data() #convert to phyloseq sample_data object
+
+phylo_counts <- genome_counts %>% 
+                    filter(!genome %in% structural_zeros$genome) %>% # remove structural zeros
+                    column_to_rownames("genome") %>% 
+                    mutate_all(~ replace(., . == 0, 0.00001)) %>% #add pseudo counts to avoid structural zero issues (note this approach can be improved!)
+                    dplyr::select(all_of(row.names(phylo_samples))) %>% #filter only faecal samples
+                    otu_table(., taxa_are_rows = TRUE) #convert to phyloseq otu_table object
+
+phylo_taxonomy <- genome_metadata %>% 
+                    filter(genome %in% rownames(phylo_counts)) %>% # remove structural zeros
+                    mutate(genome2=genome) %>% #create a pseudo genome name column
+                    column_to_rownames("genome2") %>% 
+                    dplyr::select(domain,phylum,class,order,family,genus,species,genome) %>% #add an additional taxonomic level to ensure genome-level analysis (as no all genomes have species-level taxonomic assignments. Otherwise, ANCOMBC2 aggregates analyses per species)
+                    as.matrix() %>% 
+                    tax_table() #convert to phyloseq tax_table object
+
+#Generate phyloseq object required to input ANCOMBC
+genome_data <- phyloseq(phylo_counts, phylo_taxonomy, phylo_samples)
+```
+
+
+```{r ancombc2, warning=FALSE, comments="", message=FALSE}
+set.seed(1234) #set seed for reproducibility
+ancom_output = ancombc2(data = genome_data, 
+                  assay_name = "counts", 
+                  tax_level = NULL, #change to agglomerate analysis to a higher taxonomic range
+                  fix_formula = "treatment", #fixed variable(s)
+                  p_adj_method = "holm", 
+                  pseudo_sens = TRUE,
+                  prv_cut = 0.10, 
+                  lib_cut = 1000, 
+                  s0_perc = 0.05,
+                  group = NULL, 
+                  struc_zero = FALSE, 
+                  neg_lb = FALSE,
+                  alpha = 0.05, 
+                  n_cl = 2, 
+                  verbose = TRUE,
+                  global = FALSE, 
+                  pairwise = FALSE, 
+                  dunnet = FALSE, 
+                  trend = FALSE,
+                  iter_control = list(tol = 1e-5, max_iter = 20, verbose = FALSE),
+                  em_control = list(tol = 1e-5, max_iter = 100),
+                  lme_control = NULL, 
+                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                  trend_control = NULL)
+```
+
+Merge test results and effect size estimations with metadata.
+```{r ancom_result}
+ancom_result <- ancom_output$res %>%
+    rename(genome=taxon) %>%
+    left_join(genome_metadata,by=join_by(genome==genome))
+```
+
+```{r ancom_volcano, message=F, warning=F, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+ancom_result %>%
+    mutate(significance = ifelse(p_treatmentTJ2 < 0.01, "1", "0")) %>%
+    ggplot(., aes(x=-log(p_treatmentTJ2), y=lfc_treatmentTJ2, color=significance)) +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc","#00FFFF")) +
+      geom_text(aes(2.5, 10), label = "Enriched\nin TJ2", color="#666666") +
+      geom_text(aes(2.5, -10), label = "Enriched\nin TJ1", color="#666666") +
+      labs(color="Significance", y="Difference between treatments", x="p-value") +
+      theme_classic()
+```
+
+```{r ancom_ba, message=F, warning=F, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+phylo_counts %>% 
+    as.data.frame() %>%
+    mutate(average = rowMeans(across(everything())))  %>%
+    rownames_to_column(var="genome") %>% 
+    right_join(ancom_result, by=join_by(genome==genome)) %>% 
+    mutate(significance = ifelse(p_treatmentTJ2 < 0.01, "1", "0")) %>%
+    ggplot(., aes(x=average, y=lfc_treatmentTJ2, color=significance)) +
+      geom_point() +
+      scale_color_manual(values = c("#cccccc","#00FFFF")) +
+      geom_text(aes(150, 10), label = "Enriched\nin TJ2", color="#666666") +
+      geom_text(aes(150, -10), label = "Enriched\nin TJ1", color="#666666") +
+      labs(color="Significance", y="Difference between treatments", x="Average genome count") +
+      theme_classic()
+```
+
+## Largest effect-size genomes
+
+```{r ancom_enrichment_plot, message=FALSE, warning=FALSE, fig.height=6, fig.width=10, fig.fullwidth=TRUE}
+#Get phylum colors from the EHI standard
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(ancom_result, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    dplyr::select(phylum, colors) %>%
+    mutate(colors = str_c(colors, "80"))  %>% #add 80% alpha
+    unique() %>%
+    arrange(phylum) %>%
+    dplyr::select(colors) %>%
+    pull()
+
+ancom_result %>%
+    filter(p_treatmentTJ2 < 0.01) %>%
+    ggplot(., aes(x=lfc_treatmentTJ2, y=forcats::fct_rev(phylum), color=phylum)) +
+      geom_jitter(size=3) +
+      geom_vline(xintercept=0) + 
+      xlim(-max(ancom_result$lfc_treatmentTJ2)-2,max(ancom_result$lfc_treatmentTJ2)+2) +
+      scale_color_manual(values=phylum_colors) +
+      geom_text(aes(-max(ancom_result$lfc_treatmentTJ2)+1, 1), label = "Enriched\nin TJ1", color="#666666") +
+      geom_text(aes(max(ancom_result$lfc_treatmentTJ2)-1, 1), label = "Enriched\nin TJ2", color="#666666") +
+     theme(legend.position='none',
+          panel.background = element_blank(),
+          axis.line = element_line(size = 0.5, linetype = "solid", colour = "black"),
+          axis.title.x=element_blank())+
+      labs(y="Genus",x="Genome counts") + 
+      guides(col=guide_legend("Phylum"))
+```
+
+### Top enriched in TJ1
+
+```{r ancom_topeffect_TJ1}
+ancom_result %>%
+  filter(lfc_treatmentTJ2 < 0) %>% #
+  filter(p_treatmentTJ2 < 0.01) %>%
+  arrange(lfc_treatmentTJ2) %>%
+  dplyr::select(genome,lfc_treatmentTJ2,phylum,order,genus) %>%
+  kable()
+```
+
+### Top enriched in TJ2
+
+```{r ancom_topeffect_TJ2}
+ancom_result %>%
+  filter(lfc_treatmentTJ2 > 0) %>% #
+  filter(p_treatmentTJ2 < 0.01) %>% 
+  arrange(-lfc_treatmentTJ2) %>%
+  dplyr::select(genome,lfc_treatmentTJ2,phylum,order,genus) %>%
+  kable()
 ```
