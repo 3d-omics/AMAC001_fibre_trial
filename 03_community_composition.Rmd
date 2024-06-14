@@ -1,0 +1,401 @@
+# Community composition
+
+```{r load_data_community}
+load("data/data.Rdata")
+```
+
+## Sort samples
+
+```{r sort_samples}
+#Arranged by days
+samples_days <- sample_metadata %>%
+  arrange(day,animal,library)
+
+#Arranged by animal
+samples_animal <- sample_metadata %>%
+  arrange(treatment,animal, day)
+```
+
+## Genome count table (digesta)
+```{r genomecounts_digesta, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+vertical_tree <- force.ultrametric(genome_tree,method="extend") %>%
+        ggtree(., size = 0.3)
+
+#Add phylum colors
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    mutate(phylum = factor(phylum, levels = unique(phylum))) %>%
+    column_to_rownames(var = "genome") %>%
+    select(phylum)
+
+
+colors_alphabetic <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+  select(phylum, colors) %>%
+    unique() %>%
+    arrange(phylum) %>%
+    select(colors) %>%
+    pull()
+
+vertical_tree <- gheatmap(vertical_tree, phylum_colors, offset=-0.6, width=0.1, colnames=FALSE) +
+    scale_fill_manual(values=colors_alphabetic) +
+    new_scale_fill()
+
+#Add genome counts of TJ1
+genome_counts_digesta_TJ1 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="digesta") %>% filter(treatment=="TJ1") %>% select(sample) %>% pull()))) %>% 
+        column_to_rownames(var="genome")
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_digesta_TJ1), offset=-0.4, width=1, colnames=TRUE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "white", high = "steelblue", na.value="white") +
+    new_scale_fill()
+
+#Add mean values of TJ1
+genome_counts_digesta_TJ1_mean <- genome_counts_digesta_TJ1 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_digesta_TJ1_mean,
+             geom=geom_bar,
+             mapping = aes(x=mean, y=genome),
+                 offset = 0.9,
+                 width= 0.2,
+                 orientation="y",
+         stat="identity") +
+        new_scale_fill()
+
+#Add genome counts of TJ2
+genome_counts_digesta_TJ2 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="digesta") %>% filter(treatment=="TJ2") %>% select(sample) %>% pull()))) %>% 
+          column_to_rownames(var="genome")
+
+#Add mean values of TJ2
+genome_counts_digesta_TJ2_mean <- genome_counts_digesta_TJ2 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_digesta_TJ2_mean,
+             geom=geom_bar,
+             mapping = aes(x=-mean, y=genome),
+                 offset = 0.2,
+                 width= 0.2,
+                 orientation="y",
+         stat="identity") +
+        new_scale_fill()
+
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_digesta_TJ2), offset=3.2, width=1, colnames=TRUE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "white", high = "steelblue", na.value="white") +
+    new_scale_fill()
+
+vertical_tree +
+  theme(legend.position='none')
+
+```
+
+## Taxonomy barplot (digesta)
+
+```{r barplot_digesta, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+
+#Get phylum colors from the EHI standard
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    select(phylum, colors) %>%
+    unique() %>%
+    arrange(phylum) %>%
+    select(colors) %>%
+    pull()
+
+barplot_digesta <- genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS nornalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  filter(type=="digesta")  %>% #retain only digesta samples
+  ggplot(., aes(x=sample,y=count, fill=phylum, group=phylum)) + #grouping enables keeping the same sorting of taxonomic units
+    geom_bar(stat="identity", colour="white", linewidth=0.1) + #plot stacked bars with white borders
+    scale_fill_manual(values=phylum_colors) +
+    labs(y = "Relative abundance") +
+    facet_grid(.~treatment,  scales="free_x") + #facet days
+    guides(fill = guide_legend(ncol = 1)) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+          axis.title.x = element_blank(),
+          panel.background = element_blank(),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(linewidth = 0.5, linetype = "solid", colour = "black")) +
+   labs(fill="Phylum")
+
+barplot_digesta
+```
+
+## Taxonomy barplot (faeces)
+
+```{r barplot_faeces_days, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+barplot_faeces_days <- genome_counts_filt %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS nornalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  filter(type=="faeces") %>% #retain only faecal samples
+  mutate(sample = factor(sample, levels = unique(samples_days$sample))) %>% #sort per animal code
+  ggplot(., aes(x=sample,y=count, fill=phylum, group=phylum)) + #grouping enables keeping the same sorting of taxonomic units
+    geom_bar(stat="identity", colour="white", linewidth=0.1) + #plot stacked bars with white borders
+    scale_fill_manual(values=phylum_colors) +
+    labs(y = "Relative abundance") +
+    facet_nested(. ~ day + treatment,  scales="free_x") + #facet per day and treatment
+    guides(fill = guide_legend(ncol = 1)) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+          axis.title.x = element_blank(),
+          panel.background = element_blank(),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(linewidth = 0.5, linetype = "solid", colour = "black")) +
+   labs(fill="Phylum")
+
+barplot_faeces_days
+```
+
+```{r barplot_faeces_animals, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+barplot_faeces_animals <- genome_counts %>%
+  mutate_at(vars(-genome),~./sum(.)) %>% #apply TSS nornalisation
+  pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+  left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append genome metadata
+  left_join(., sample_metadata, by = join_by(sample == sample)) %>% #append sample metadata
+  filter(type=="faeces") %>% #retain only faecal samples
+  mutate(sample = factor(sample, levels = unique(samples_days$sample))) %>% #sort samples per sampling day
+  mutate(animal = factor(animal, levels = unique(samples_animal$animal))) %>% #sort animals per treatment
+  ggplot(., aes(x=sample,y=count, fill=phylum, group=phylum)) + #grouping enables keeping the same sorting of taxonomic units
+    geom_bar(stat="identity", colour="white", linewidth=0.1) + #plot stacked bars with white borders
+    scale_fill_manual(values=phylum_colors) +
+    labs(y = "Relative abundance") +
+    facet_nested(. ~ treatment + animal,  scales="free_x") + #facet per treatment and animal
+    guides(fill = guide_legend(ncol = 1)) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+          axis.title.x = element_blank(),
+          panel.background = element_blank(),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(linewidth = 0.5, linetype = "solid", colour = "black")) +
+   labs(fill="Phylum")
+
+barplot_faeces_animals
+```
+
+## Genome count table (faeces)
+
+```{r genomecounts_faeces, fig.height=8, fig.width=10, fig.fullwidth=TRUE}
+vertical_tree <- force.ultrametric(genome_tree,method="extend") %>%
+        ggtree(., size = 0.3)
+
+#Add phylum colors
+phylum_colors <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+    mutate(phylum = factor(phylum, levels = unique(phylum))) %>%
+    column_to_rownames(var = "genome") %>%
+    select(phylum)
+
+
+colors_alphabetic <- read_tsv("https://raw.githubusercontent.com/earthhologenome/EHI_taxonomy_colour/main/ehi_phylum_colors.tsv") %>%
+  right_join(genome_metadata, by=join_by(phylum == phylum)) %>%
+    arrange(match(genome, genome_tree$tip.label)) %>%
+  select(phylum, colors) %>%
+    unique() %>%
+    arrange(phylum) %>%
+    select(colors) %>%
+    pull()
+
+vertical_tree <- gheatmap(vertical_tree, phylum_colors, offset=-0.6, width=0.1, colnames=FALSE) +
+    scale_fill_manual(values=colors_alphabetic) +
+    new_scale_fill()
+
+#Add genome counts of d0
+genome_counts_faeces_d0 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="faeces") %>% filter(day=="0") %>% select(sample) %>% pull()))) %>% 
+          column_to_rownames(var="genome")
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_faeces_d0_d0), offset=-0.4, width=0.3, colnames=FALSE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "lightblue", high = "#315b7d", na.value="#f4f4f4") +
+    new_scale_fill()
+
+#Add mean values of d0
+genome_counts_faeces_d0_mean <- genome_counts_faeces_d0 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_faeces_d0_mean,
+             geom=geom_bar,
+             mapping = aes(x=mean, y=genome),
+             pwidth = 0.1,
+             offset = 0.15,
+             width= 1,
+             orientation="y",
+             axis.params=list(axis="x"),
+             stat="identity") +
+        new_scale_fill()
+
+#Add genome counts of d7
+genome_counts_faeces_d7 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="faeces") %>% filter(day=="7") %>% select(sample) %>% pull()))) %>% 
+          column_to_rownames(var="genome")
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_faeces_d7), offset=0.6, width=0.3, colnames=FALSE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "lightblue", high = "#315b7d", na.value="#f4f4f4") +
+    new_scale_fill()
+
+
+#Add mean values of d7
+genome_counts_faeces_d7_mean <- genome_counts_faeces_d7 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_faeces_d7_mean,
+             geom=geom_bar,
+             mapping = aes(x=mean, y=genome),
+             pwidth = 0.1,
+             offset = 0.3,
+             width= 1,
+             orientation="y",
+             axis.params=list(axis="x"),
+             stat="identity") +
+        new_scale_fill()
+
+#Add genome counts of d14
+genome_counts_faeces_d14 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="faeces") %>% filter(day=="14") %>% select(sample) %>% pull()))) %>% 
+          column_to_rownames(var="genome")
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_faeces_d14), offset=1.7, width=0.3, colnames=FALSE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "lightblue", high = "#315b7d", na.value="#f4f4f4") +
+    new_scale_fill()
+
+
+#Add mean values of d14
+genome_counts_faeces_d14_mean <- genome_counts_faeces_d14 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_faeces_d14_mean,
+             geom=geom_bar,
+             mapping = aes(x=mean, y=genome),
+             pwidth = 0.1,
+             offset = 0.33,
+             width= 1,
+             orientation="y",
+             axis.params=list(axis="x"),
+             stat="identity") +
+        new_scale_fill()
+
+#Add genome counts of d21
+genome_counts_faeces_d21 <- genome_counts_filt %>%
+          select(all_of(c("genome",sample_metadata %>% filter(type=="faeces") %>% filter(day=="21") %>% select(sample) %>% pull()))) %>% 
+          column_to_rownames(var="genome")
+
+vertical_tree <- gheatmap(vertical_tree, log10(genome_counts_faeces_d21), offset=2.7, width=0.3, colnames=FALSE, colnames_angle=90, font.size=3, colnames_position="top", colnames_offset_y = 15) +
+    vexpand(.08) +
+    coord_cartesian(clip = "off") +
+    scale_fill_gradient(low = "lightblue", high = "#315b7d", na.value="#f4f4f4") +
+    new_scale_fill()
+
+
+#Add mean values of d21
+genome_counts_faeces_d21_mean <- genome_counts_faeces_d21 %>% 
+            rownames_to_column(var="genome") %>% 
+            rowwise() %>% 
+            mutate(mean = mean(c_across(where(is.numeric)))) %>% 
+            select(genome,mean)
+
+vertical_tree <-  vertical_tree +
+        scale_fill_manual(values = "#cccccc") +
+        geom_fruit(
+             data=genome_counts_faeces_d21_mean,
+             geom=geom_bar,
+             mapping = aes(x=mean, y=genome),
+             pwidth = 0.1,
+             offset = 0.3,
+             width= 1,
+             orientation="y",
+             axis.params=list(axis="x"),
+             stat="identity") +
+        new_scale_fill()
+
+vertical_tree +
+  theme(legend.position='none')
+```
+
+### Top genera per treatment/time
+
+```{r top_genera_rank}
+genus_rank <- genome_counts %>%
+    pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+    left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append taxonomy
+    inner_join(., sample_metadata, by = join_by(sample == sample)) %>% #append metadata
+    filter(type=="faeces")  %>% #retain only digesta samples
+    group_by(genus) %>%
+    summarise(count=sum(count)) %>%
+    arrange(-count) %>%
+    select(genus) %>%
+    slice(1:30) %>%
+    pull()
+```
+
+```{r top_genera_plot, message=FALSE, warning=FALSE, fig.height=10, fig.width=10, fig.fullwidth=TRUE}
+genome_counts %>%
+    pivot_longer(-genome, names_to = "sample", values_to = "count") %>% #reduce to minimum number of columns
+    left_join(., genome_metadata, by = join_by(genome == genome)) %>% #append taxonomy
+    inner_join(., sample_metadata, by = join_by(sample == sample)) %>% #append metadata
+    filter(type=="faeces")  %>% #retain only digesta samples
+    group_by(sample,treatment,day,genus) %>%
+    summarise(count=sum(count)) %>%
+    filter(genus %in% genus_rank) %>%
+    mutate(genus = fct_relevel(genus, rev(genus_rank))) %>%
+    ggplot(., aes(y=genus,x=count)) +
+      geom_col() +
+      facet_wrap(vars(treatment, day), nrow = 1) +
+      theme(axis.text.x=element_blank(), #remove x axis labels
+        axis.ticks.x=element_blank(), #remove x axis ticks
+        )
+      labs(y="Top 30 genera",x="Genome counts")
+```

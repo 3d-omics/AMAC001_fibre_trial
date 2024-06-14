@@ -1,30 +1,22 @@
-# AMAC001_fibre_trial
-Analysis repository of the experiment 7.3 on mannan fibre consumption in swine. The downstream analyses are split in multiple steps.
+# AMAC001 Swine fibre trial
+Analysis repository of the experiment 7.3 on mannan fibre consumption in swine. 
 
-## 1. Prepare data
+## Bioinformatic procedures
 
-The first step fetches all relevant data and generates a data.Rdata file in the data directory. 
+Data processing to generate annotated metagenome-assembled genomes and genome count tables was conducted using the following Snakemake pipeline: [mg_assembly](https://github.com/3d-omics/mg_assembly). Data analysis procedures source from the outputs of this pipeline.
 
-- **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/1-prepare_data.Rmd
-- **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/1-prepare_data.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/1-prepare_data.html)
+## Analysis procedures
 
-## 2. Genome catalogue overview
+The raw code used for data analysis is in the **Rmd** files stored in the root directory of this repository, while the bookdown-rendered webbook is available at:
 
-Overview of the taxonomic, phylogenetic and functional attributes of the genome catalogue
+[3d-omics.github.io/AMAC006_protein_trial](https://3d-omics.github.io/AMAC006_protein_trial)
 
-- **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/2-genome_catalogue_overview.Rmd
-- **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/2-genome_catalogue_overview.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/2-genome_catalogue_overview.html)
+While the webbook provides a user-friendly overview of the procedures, analyses can be directly reproduced using the Rmd documents. Note that the code chunks that require heavy computation have been tuned off using 'eval=FALSE'. To re-render the webbook, you can use the following code:
 
-## 3. Composition overview
+```r
+library(bookdown)
+library(htmlwidgets)
+library(webshot)
 
-Overview of the composition and diversity of microbial communities.
-
-- **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.Rmd
-- **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/3-composition_overview.html)
-
-## 4. Differential abundance between treatments
-
-- **Rmd code:** https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.Rmd
-- **HTML render:** [https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.html](http://htmlpreview.github.io/?https://github.com/3d-omics/AMAC001_fibre_trial/blob/main/4-differential_abundance.html)
-
-
+render_book(input = ".", output_format = "bookdown::gitbook", output_dir = "docs")
+```
